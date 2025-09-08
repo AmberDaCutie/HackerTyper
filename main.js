@@ -8,30 +8,30 @@ window.addEventListener("DOMContentLoaded", () => {
       overlayShown = false;
 
   // Pony elements
-  const ponyTyper = document.getElementById("pony-typer");
-  const ponyCursor = document.getElementById("pony-cursor");
-  const ponyBottomPadding = document.getElementById("pony-bottom-padding");
-  const ponyFontDiv = document.getElementById("pony-font-div");
-  const ponyOverlay = document.getElementById("pony-overlay");
-  const ponyFooter = document.getElementById("pony-footer");
-  const ponyMain = document.getElementById("pony-main");
-  const ponyMenu = document.getElementById("pony-menu");
-  const ponyHiddenText = document.getElementById("pony-hidden-text");
-  const ponyFileRow = document.getElementById("pony-file-row");
+  const ponyTyper = document.getElementById("pony_typer");
+  const ponyCursor = document.getElementById("pony_cursor");
+  const ponyBottomPadding = document.getElementById("pony_bottom_padding");
+  const ponyFontDiv = document.getElementById("pony_font_div");
+  const ponyOverlay = document.getElementById("pony_overlay");
+  const ponyFooter = document.getElementById("pony_footer");
+  const ponyMain = document.getElementById("pony_main");
+  const ponyMenu = document.getElementById("pony_menu");
+  const ponyHiddenText = document.getElementById("pony_hidden_text");
+  const ponyFileRow = document.getElementById("pony_file_row");
 
   // Settings inputs
-  const ponyThemeColor = document.getElementById("pony-theme-color");
-  const ponySpeedInput = document.getElementById("pony-speed-input");
-  const ponySpeedRange = document.getElementById("pony-speed-range");
-  const ponyFontsizeInput = document.getElementById("pony-fontsize-input");
-  const ponyFontsizeRange = document.getElementById("pony-fontsize-range");
-  const ponyFontSelect = document.getElementById("pony-font-select");
+  const ponyThemeColor = document.getElementById("pony_theme_color");
+  const ponySpeedInput = document.getElementById("speed_input");
+  const ponySpeedRange = document.getElementById("speed_range");
+  const ponyFontsizeInput = document.getElementById("pony_fontsize_input");
+  const ponyFontsizeRange = document.getElementById("pony_fontsize_range");
+  const ponyFontSelect = document.getElementById("pony_font_select");
 
   // Alerts
-  const granted = document.getElementById("pony-access-granted");
-  const denied = document.getElementById("pony-access-denied");
+  const granted = document.getElementById("pony_access_granted");
+  const denied = document.getElementById("pony_access_denied");
 
-  // --- helpers ---
+  // ___ helpers ___
   function getFromStore(key, fallback) {
     if (!localStorage) return fallback;
     let val = localStorage.getItem(key);
@@ -63,7 +63,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function type(n) {
-    let chunk = source.substring(index, index + n).replace(/[\u00A0-\u9999<>\&]/gim, ch => "&#" + ch.charCodeAt(0) + ";");
+    let chunk = source.substring(index, index + n).replace(/[\u00A0_\u9999<>\&]/gim, ch => "&#" + ch.charCodeAt(0) + ";");
     ponyTyper.innerHTML += chunk;
     index += n;
     ponyBottomPadding.scrollIntoView(false);
@@ -81,7 +81,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function onColorChange() {
-    if (/#[a-f0-9]{3,9}/.test(ponyThemeColor.value)) setThemeColor(ponyThemeColor.value);
+    if (/#[a_f0_9]{3,9}/.test(ponyThemeColor.value)) setThemeColor(ponyThemeColor.value);
   }
 
   function onSpeedChange(e) {
