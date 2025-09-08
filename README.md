@@ -1,2 +1,2 @@
-# HackerTyper
-fake hacker typer thing for fun
+# PonyTyper
+Fake hacker typer for Ponies!
