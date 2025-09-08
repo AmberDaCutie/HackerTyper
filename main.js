@@ -239,5 +239,7 @@ function bindEvents() {
 }
 
 // === Init ===
-setDefaults();
-bindEvents();
+window.addEventListener("DOMContentLoaded", () => {
+  setDefaults();
+  bindEvents();
+});
