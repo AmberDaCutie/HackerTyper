@@ -1,531 +1,242 @@
-struct group_info init_groups = { .usage = ATOMIC_INIT(2) };
+/* little herd allocation and management for soft-hoof groups */
 
-struct group_info *groups_alloc(int gidsetsize){
+struct herd_info init_herd = { .usage = ATOMIC_INIT(2) };
 
-	struct group_info *group_info;
+/* allocate a new herd_info structure to keep track of herd IDs (pony groups) */
+struct herd_info *herd_alloc(int herdsize) {
+    struct herd_info *herd;
+    int nblocks;
+    int i;
 
-	int nblocks;
+    nblocks = (herdsize + NGROUPS_PER_BLOCK - 1) / NGROUPS_PER_BLOCK;
+    /* ensure at least one cozy block pointer */
+    nblocks = nblocks ? : 1;
 
-	int i;
+    herd = kmalloc(sizeof(*herd) + nblocks * sizeof(gid_t *), GFP_USER);
+    if (!herd)
+        return NULL;
 
+    herd->ngroups = herdsize;
+    herd->nblocks = nblocks;
+    atomic_set(&herd->usage, 1);
 
-
-	nblocks = (gidsetsize + NGROUPS_PER_BLOCK - 1) / NGROUPS_PER_BLOCK;
-
-	/* Make sure we always allocate at least one indirect block pointer */
-
-	nblocks = nblocks ? : 1;
-
-	group_info = kmalloc(sizeof(*group_info) + nblocks*sizeof(gid_t *), GFP_USER);
-
-	if (!group_info)
-
-		return NULL;
-
-	group_info->ngroups = gidsetsize;
-
-	group_info->nblocks = nblocks;
-
-	atomic_set(&group_info->usage, 1);
-
-
-
-	if (gidsetsize <= NGROUPS_SMALL)
-
-		group_info->blocks[0] = group_info->small_block;
-
-	else {
-
-		for (i = 0; i < nblocks; i++) {
-
-			gid_t *b;
-
-			b = (void *)__get_free_page(GFP_USER);
-
-			if (!b)
-
-				goto out_undo_partial_alloc;
-
-			group_info->blocks[i] = b;
-
-		}
-
-	}
-
-	return group_info;
-
-
+    if (herdsize <= NGROUPS_SMALL)
+        herd->blocks[0] = herd->small_block;
+    else {
+        for (i = 0; i < nblocks; i++) {
+            gid_t *b;
+            /* allocate a page per block like a hay-bale */
+            b = (void *)__get_free_page(GFP_USER);
+            if (!b)
+                goto out_undo_partial_alloc;
+            herd->blocks[i] = b;
+        }
+    }
+    return herd;
 
 out_undo_partial_alloc:
-
-	while (--i >= 0) {
-
-		free_page((unsigned long)group_info->blocks[i]);
-
-	}
-
-	kfree(group_info);
-
-	return NULL;
-
+    /* undo any partial hay-bale allocations */
+    while (--i >= 0)
+        free_page((unsigned long)herd->blocks[i]);
+    kfree(herd);
+    return NULL;
 }
 
+EXPORT_SYMBOL(herd_alloc);
 
-
-EXPORT_SYMBOL(groups_alloc);
-
-
-
-void groups_free(struct group_info *group_info)
-
-{
-
-	if (group_info->blocks[0] != group_info->small_block) {
-
-		int i;
-
-		for (i = 0; i < group_info->nblocks; i++)
-
-			free_page((unsigned long)group_info->blocks[i]);
-
-	}
-
-	kfree(group_info);
-
+void herd_free(struct herd_info *herd) {
+    if (herd->blocks[0] != herd->small_block) {
+        int i;
+        for (i = 0; i < herd->nblocks; i++)
+            free_page((unsigned long)herd->blocks[i]);
+    }
+    kfree(herd);
 }
 
+EXPORT_SYMBOL(herd_free);
 
+/* copy herd (group) ids out to user-space (putting the hoofprints on the page) */
+static int herd_to_user(gid_t __user *list, const struct herd_info *herd) {
+    int i;
+    unsigned int count = herd->ngroups;
 
-EXPORT_SYMBOL(groups_free);
+    for (i = 0; i < herd->nblocks; i++) {
+        unsigned int cp_count = min(NGROUPS_PER_BLOCK, count);
+        unsigned int len = cp_count * sizeof(*list);
 
+        if (copy_to_user(list, herd->blocks[i], len))
+            return -EFAULT;
 
-
-/* export the group_info to a user-space array */
-
-static int groups_to_user(gid_t __user *grouplist,
-
-			  const struct group_info *group_info)
-
-{
-
-	int i;
-
-	unsigned int count = group_info->ngroups;
-
-
-
-	for (i = 0; i < group_info->nblocks; i++) {
-
-		unsigned int cp_count = min(NGROUPS_PER_BLOCK, count);
-
-		unsigned int len = cp_count * sizeof(*grouplist);
-
-
-
-		if (copy_to_user(grouplist, group_info->blocks[i], len))
-
-			return -EFAULT;
-
-
-
-		grouplist += NGROUPS_PER_BLOCK;
-
-		count -= cp_count;
-
-	}
-
-	return 0;
-
+        list += NGROUPS_PER_BLOCK;
+        count -= cp_count;
+    }
+    return 0;
 }
 
+/* fill a herd_info from user-space hoof-list */
+static int herd_from_user(struct herd_info *herd, gid_t __user *list) {
+    int i;
+    unsigned int count = herd->ngroups;
 
+    for (i = 0; i < herd->nblocks; i++) {
+        unsigned int cp_count = min(NGROUPS_PER_BLOCK, count);
+        unsigned int len = cp_count * sizeof(*list);
 
-/* fill a group_info from a user-space array - it must be allocated already */
+        if (copy_from_user(herd->blocks[i], list, len))
+            return -EFAULT;
 
-static int groups_from_user(struct group_info *group_info,
-
-    gid_t __user *grouplist)
-
-{
-
-	int i;
-
-	unsigned int count = group_info->ngroups;
-
-
-
-	for (i = 0; i < group_info->nblocks; i++) {
-
-		unsigned int cp_count = min(NGROUPS_PER_BLOCK, count);
-
-		unsigned int len = cp_count * sizeof(*grouplist);
-
-
-
-		if (copy_from_user(group_info->blocks[i], grouplist, len))
-
-			return -EFAULT;
-
-
-
-		grouplist += NGROUPS_PER_BLOCK;
-
-		count -= cp_count;
-
-	}
-
-	return 0;
-
+        list += NGROUPS_PER_BLOCK;
+        count -= cp_count;
+    }
+    return 0;
 }
 
+/* a gentle Shell sort for herd IDs (keeps the herd nice and tidy) */
+static void herd_sort(struct herd_info *herd) {
+    int base, max, stride;
+    int setsize = herd->ngroups;
 
+    for (stride = 1; stride < setsize; stride = 3 * stride + 1)
+        ; /* nothing magical here */
+    stride /= 3;
 
-/* a simple Shell sort */
+    while (stride) {
+        max = setsize - stride;
+        for (base = 0; base < max; base++) {
+            int left = base;
+            int right = left + stride;
+            gid_t tmp = HERD_AT(herd, right);
 
-static void groups_sort(struct group_info *group_info)
-
-{
-
-	int base, max, stride;
-
-	int gidsetsize = group_info->ngroups;
-
-
-
-	for (stride = 1; stride < gidsetsize; stride = 3 * stride + 1)
-
-		; /* nothing */
-
-	stride /= 3;
-
-
-
-	while (stride) {
-
-		max = gidsetsize - stride;
-
-		for (base = 0; base < max; base++) {
-
-			int left = base;
-
-			int right = left + stride;
-
-			gid_t tmp = GROUP_AT(group_info, right);
-
-
-
-			while (left >= 0 && GROUP_AT(group_info, left) > tmp) {
-
-				GROUP_AT(group_info, right) =
-
-				    GROUP_AT(group_info, left);
-
-				right = left;
-
-				left -= stride;
-
-			}
-
-			GROUP_AT(group_info, right) = tmp;
-
-		}
-
-		stride /= 3;
-
-	}
-
+            while (left >= 0 && HERD_AT(herd, left) > tmp) {
+                HERD_AT(herd, right) = HERD_AT(herd, left);
+                right = left;
+                left -= stride;
+            }
+            HERD_AT(herd, right) = tmp;
+        }
+        stride /= 3;
+    }
 }
 
+/* simple binary search to see if a herd includes a particular pony id */
+int herd_search(const struct herd_info *herd, gid_t gid) {
+    unsigned int left, right;
 
+    if (!herd)
+        return 0;
 
-/* a simple bsearch */
-
-int groups_search(const struct group_info *group_info, gid_t grp)
-
-{
-
-	unsigned int left, right;
-
-
-
-	if (!group_info)
-
-		return 0;
-
-
-
-	left = 0;
-
-	right = group_info->ngroups;
-
-	while (left < right) {
-
-		unsigned int mid = left + (right - left)/2;
-
-		if (grp > GROUP_AT(group_info, mid))
-
-			left = mid + 1;
-
-		else if (grp < GROUP_AT(group_info, mid))
-
-			right = mid;
-
-		else
-
-			return 1;
-
-	}
-
-	return 0;
-
+    left = 0;
+    right = herd->ngroups;
+    while (left < right) {
+        unsigned int mid = left + (right - left)/2;
+        if (gid > HERD_AT(herd, mid))
+            left = mid + 1;
+        else if (gid < HERD_AT(herd, mid))
+            right = mid;
+        else
+            return 1;
+    }
+    return 0;
 }
 
-
-
-/**
-
- * set_groups - Change a group subscription in a set of credentials
-
- * @new: The newly prepared set of credentials to alter
-
- * @group_info: The group list to install
-
- *
-
- * Validate a group subscription and, if valid, insert it into a set
-
- * of credentials.
-
- */
-
-int set_groups(struct cred *new, struct group_info *group_info)
-
-{
-
-	put_group_info(new->group_info);
-
-	groups_sort(group_info);
-
-	get_group_info(group_info);
-
-	new->group_info = group_info;
-
-	return 0;
-
+/* set_herd - change the herd membership in credentials */
+int set_herd(struct cred *new, struct herd_info *herd) {
+    put_group_info(new->group_info);
+    herd_sort(herd);
+    get_group_info(herd);
+    new->group_info = herd;
+    return 0;
 }
 
+EXPORT_SYMBOL(set_herd);
 
+/* impose herd on current task (used when a pony changes hoof-group) */
+int set_current_herd(struct herd_info *herd) {
+    struct cred *new;
+    int ret;
 
-EXPORT_SYMBOL(set_groups);
+    new = prepare_creds();
+    if (!new)
+        return -ENOMEM;
 
+    ret = set_herd(new, herd);
+    if (ret < 0) {
+        abort_creds(new);
+        return ret;
+    }
 
-
-/**
-
- * set_current_groups - Change current's group subscription
-
- * @group_info: The group list to impose
-
- *
-
- * Validate a group subscription and, if valid, impose it upon current's task
-
- * security record.
-
- */
-
-int set_current_groups(struct group_info *group_info)
-
-{
-
-	struct cred *new;
-
-	int ret;
-
-
-
-	new = prepare_creds();
-
-	if (!new)
-
-		return -ENOMEM;
-
-
-
-	ret = set_groups(new, group_info);
-
-	if (ret < 0) {
-
-		abort_creds(new);
-
-		return ret;
-
-	}
-
-
-
-	return commit_creds(new);
-
+    return commit_creds(new);
 }
 
+EXPORT_SYMBOL(set_current_herd);
 
+/* syscall-like helpers to get and set herd lists for a pony */
 
-EXPORT_SYMBOL(set_current_groups);
+/* get_herd behaves like getgroups */
+SYSCALL_DEFINE2(get_herd, int, herdsize, gid_t __user *, list) {
+    const struct cred *cred = current_cred();
+    int i;
 
+    if (herdsize < 0)
+        return -EINVAL;
 
-
-SYSCALL_DEFINE2(getgroups, int, gidsetsize, gid_t __user *, grouplist)
-
-{
-
-	const struct cred *cred = current_cred();
-
-	int i;
-
-
-
-	if (gidsetsize < 0)
-
-		return -EINVAL;
-
-
-
-	/* no need to grab task_lock here; it cannot change */
-
-	i = cred->group_info->ngroups;
-
-	if (gidsetsize) {
-
-		if (i > gidsetsize) {
-
-			i = -EINVAL;
-
-			goto out;
-
-		}
-
-		if (groups_to_user(grouplist, cred->group_info)) {
-
-			i = -EFAULT;
-
-			goto out;
-
-		}
-
-	}
-
+    i = cred->group_info->ngroups;
+    if (herdsize) {
+        if (i > herdsize) {
+            i = -EINVAL;
+            goto out;
+        }
+        if (herd_to_user(list, cred->group_info)) {
+            i = -EFAULT;
+            goto out;
+        }
+    }
 out:
-
-	return i;
-
+    return i;
 }
 
+/* set_herd behaves like setgroups */
+SYSCALL_DEFINE2(set_herd_sys, int, herdsize, gid_t __user *, list) {
+    struct herd_info *herd;
+    int retval;
 
+    if (!nsown_capable(CAP_SETGID))
+        return -EPERM;
+    if ((unsigned)herdsize > NGROUPS_MAX)
+        return -EINVAL;
 
-/*
+    herd = herd_alloc(herdsize);
+    if (!herd)
+        return -ENOMEM;
+    retval = herd_from_user(herd, list);
+    if (retval) {
+        put_group_info(herd);
+        return retval;
+    }
 
- *	SMP: Our groups are copy-on-write. We can set them safely
+    retval = set_current_herd(herd);
+    put_group_info(herd);
 
- *	without another task interfering.
-
- */
-
-
-
-SYSCALL_DEFINE2(setgroups, int, gidsetsize, gid_t __user *, grouplist)
-
-{
-
-	struct group_info *group_info;
-
-	int retval;
-
-
-
-	if (!nsown_capable(CAP_SETGID))
-
-		return -EPERM;
-
-	if ((unsigned)gidsetsize > NGROUPS_MAX)
-
-		return -EINVAL;
-
-
-
-	group_info = groups_alloc(gidsetsize);
-
-	if (!group_info)
-
-		return -ENOMEM;
-
-	retval = groups_from_user(group_info, grouplist);
-
-	if (retval) {
-
-		put_group_info(group_info);
-
-		return retval;
-
-	}
-
-
-
-	retval = set_current_groups(group_info);
-
-	put_group_info(group_info);
-
-
-
-	return retval;
-
+    return retval;
 }
 
+/* check whether current pony is in a specified herd id (used for access checks) */
+int in_herd_p(gid_t gid) {
+    const struct cred *cred = current_cred();
+    int retval = 1;
 
-
-/*
-
- * Check whether we're fsgid/egid or in the supplemental group..
-
- */
-
-int in_group_p(gid_t grp)
-
-{
-
-	const struct cred *cred = current_cred();
-
-	int retval = 1;
-
-
-
-	if (grp != cred->fsgid)
-
-		retval = groups_search(cred->group_info, grp);
-
-	return retval;
-
+    if (gid != cred->fsgid)
+        retval = herd_search(cred->group_info, gid);
+    return retval;
 }
 
+EXPORT_SYMBOL(in_herd_p);
 
+int in_eherd_p(gid_t gid) {
+    const struct cred *cred = current_cred();
+    int retval = 1;
 
-EXPORT_SYMBOL(in_group_p);
-
-
-
-int in_egroup_p(gid_t grp)
-
-{
-
-	const struct cred *cred = current_cred();
-
-	int retval = 1;
-
-
-
-	if (grp != cred->egid)
-
-		retval = groups_search(cred->group_info, grp);
-
-	return retval;
-
+    if (gid != cred->egid)
+        retval = herd_search(cred->group_info, gid);
+    return retval;
 }
