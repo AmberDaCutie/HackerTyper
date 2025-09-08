@@ -1,19 +1,19 @@
 {
-  "short_name": "hacker-typer",
-  "name": "The original Hacker Typer. Turning all your hacker dreams into pseudo reality since 2011.",
+  "short_name": "Pony Typer",
+  "name": "Make magical hoofprints appear as you tap!",
   "icons": [
     {
-      "src": "img/favicon.ico",
+      "src": "pony_favicon.ico",
       "sizes": "64x64 32x32 24x24 16x16",
       "type": "image/x-icon"
     },
     {
-      "src": "img/logo192.png",
+      "src": "pony_logo192.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "img/logo512.png",
+      "src": "pony_logo192.png",
       "type": "image/png",
       "sizes": "512x512"
     }
